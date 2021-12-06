@@ -290,12 +290,12 @@ async fn main() {
                                 charset.remove(CharacterSet::Uppercase);
                             }
                             if ! site.symbols {
-                                debug!("Numeric characters excluded");
-                                charset.remove(CharacterSet::Numbers);
-                            }
-                            if ! site.numbers {
                                 debug!("Symbol characters excluded");
                                 charset.remove(CharacterSet::Symbols);
+                            }
+                            if ! site.numbers {
+                                debug!("Numeric characters excluded");
+                                charset.remove(CharacterSet::Numbers);
                             }
                             if charset.is_empty() {
                                 println!("There is a problem with site settings, all characters have been excluded");

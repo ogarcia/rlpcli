@@ -1,18 +1,45 @@
 # rlpcli
 
-**rlpcli** is a tiny CLI helper written in [Rust][1] to get [LessPass][2]
-paswords configuration directly from a LessPass server.
+A tiny CLI helper written in [Rust][1] to get [LessPass][2] paswords and
+site settings directly from a LessPass server.
 
 [1]: https://www.rust-lang.org/
 [2]: https://lesspass.com/
 
-## Install
+## Installation
+
+### From binary
 
 Simply download latest release from [releases page][releases]. If you are an
 Arch Linux user you can install it from [AUR][package].
 
 [releases]: https://github.com/ogarcia/rlpcli/releases
 [package]: https://aur.archlinux.org/packages/rlpcli
+
+### From source
+
+#### Installing Rust
+
+rlpcli uses several functions that require nightly version of Rust.
+```
+rustup default nightly
+```
+
+If you prefer, you can use the nightly version only for install rlpcli.
+```
+rustup override set nightly
+```
+
+#### Installing rlpcli
+
+To build rlpcli binary simply execute the following commands.
+```sh
+git clone https://github.com/ogarcia/rlpcli.git
+cd rlpcli
+cargo build --release
+```
+
+After build the binary is located in `target/release/rlpcli`.
 
 ## Usage
 
