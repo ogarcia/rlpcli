@@ -4,7 +4,7 @@ extern crate clap;
 extern crate xdg;
 use clap::{crate_authors, crate_version, Arg, App};
 use env_logger::Builder;
-use lesspass::{CharacterSet, generate_entropy, generate_salt, render_password};
+use lesspass::{Algorithm, CharacterSet, generate_entropy, generate_salt, render_password};
 use log::LevelFilter;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -44,7 +44,7 @@ pub struct Site {
     pub symbols: bool,
     pub numbers: bool,
     pub length: u8,
-    pub counter: u8
+    pub counter: u32
 }
 
 fn print_site(site: &Site) {
@@ -302,8 +302,8 @@ async fn main() {
                                 process::exit(0x0100);
                             }
                             let salt = generate_salt(&site.site, &site.login, site.counter);
-                            let entropy = generate_entropy(&var, &salt, &ring::digest::SHA256, 100000);
-                            let password = render_password(&entropy, charset, site.length);
+                            let entropy = generate_entropy(&var, &salt, Algorithm::SHA256, 100000);
+                            let password = render_password(&entropy, charset, site.length.into());
                             info!("Returning site password");
                             println!("{}", password);
                         },

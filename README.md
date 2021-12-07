@@ -63,3 +63,5 @@ sitename one of the list given in `rlpcli` command.
 If you set `LESSPASS_MASTERPASS` environment variable with your LessPass
 master password, _rlpcli_ returns the password of site instead of site
 configuration.
+
+There are other uses, run `rlpcli -h` to see the help.
