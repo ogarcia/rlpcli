@@ -20,15 +20,19 @@ Arch Linux user you can install it from [AUR][package].
 
 #### Installing Rust
 
-rlpcli uses several functions that require nightly version of Rust.
+rlpcli build has been tested with current Rust stable release version
+1.57.0. You can install Rust from your distribution package or [use
+`rustup`](rustup).
 ```
-rustup default nightly
+rustup default stable
 ```
 
-If you prefer, you can use the nightly version only for install rlpcli.
+If you prefer, you can use the stable version only for install rlpcli.
 ```
-rustup override set nightly
+rustup override set stable
 ```
+
+[rustup]: https://rustup.rs/
 
 #### Installing rlpcli
 
