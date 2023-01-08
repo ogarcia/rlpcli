@@ -24,7 +24,7 @@ jobs:
           install -Dm644 "README.md" "rlpcli-${GITHUB_REF##*/}/README.md"
           install -Dm644 "LICENSE" "rlpcli-${GITHUB_REF##*/}/LICENSE"
           tar cvJf "rlpcli-${GITHUB_REF##*/}.tar.xz" "rlpcli-${GITHUB_REF##*/}"
-          echo ::set-output name=version::${GITHUB_REF##*/}
+          echo "version=${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
       - uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request'
         with:
