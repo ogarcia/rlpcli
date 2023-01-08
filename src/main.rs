@@ -6,7 +6,6 @@ use clap::{command, Arg, ArgAction};
 use env_logger::Builder;
 use lesspass::{Algorithm, CharacterSet, generate_entropy, generate_salt, render_password};
 use log::LevelFilter;
-use reqwest::Client;
 use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
 use xdg::BaseDirectories;
@@ -87,29 +86,26 @@ fn build_url(host: &str, path: &str) -> Url {
     host_url.join(path).unwrap()
 }
 
-async fn get_token(host: &str, user: &str, pass: &str) -> Result<Token, String> {
+fn get_token(host: &str, user: &str, pass: &str) -> Result<Token, String> {
     let url = build_url(host, "auth/jwt/create/");
     let auth = Auth {
         email: String::from(user),
         password: String::from(pass)
     };
-    match Client::new().post(url.as_str()).json(&auth).send().await {
+    match ureq::post(url.as_str()).send_json(&auth) {
         Ok(response) => {
-            if response.status() == 200 || response.status() == 201 {
-                let token: Token = match response.json().await {
-                    Ok(token) => token,
-                    Err(err) => return Err(format!("Unexpected response, {}", err))
-                };
-                Ok(token)
-            } else {
-                Err(format!("Error getting authorization token, unexpected status code {}", response.status()))
-            }
+            let token: Token = match response.into_json() {
+                Ok(token) => token,
+                Err(err) => return Err(format!("Unexpected response, {}", err))
+            };
+            Ok(token)
         },
+        Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
         Err(_) => Err(format!("Error making request to {}", url))
     }
 }
 
-async fn refresh_token(host: &str, token: &str) -> Result<Token, String> {
+fn refresh_token(host: &str, token: &str) -> Result<Token, String> {
     // If token is empty simply return an error
     if token == "" || token == "\n" {
         debug!("Token file does not exists or is empty");
@@ -119,43 +115,36 @@ async fn refresh_token(host: &str, token: &str) -> Result<Token, String> {
     let refresh = Refresh {
         refresh: String::from(token)
     };
-    match Client::new().post(url.as_str()).json(&refresh).send().await {
+    match ureq::post(url.as_str()).send_json(&refresh) {
         Ok(response) => {
-            if response.status() == 200 || response.status() == 201 {
-                let token: Token = match response.json().await {
-                    Ok(token) => token,
-                    Err(err) => return Err(format!("Unexpected response, {}", err))
-                };
-                Ok(token)
-            } else {
-                Err(format!("Error refreshing authorization token, unexpected status code {}", response.status()))
-            }
+            let token: Token = match response.into_json() {
+                Ok(token) => token,
+                Err(err) => return Err(format!("Unexpected response, {}", err))
+            };
+            Ok(token)
         },
+        Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
         Err(_) => Err(format!("Error making request to {}", url))
     }
 }
 
-async fn get_sites(host: &str, token: &str) -> Result<Sites, String> {
+fn get_sites(host: &str, token: &str) -> Result<Sites, String> {
     let url = build_url(host, "passwords/");
     let authorization = format!("Bearer {}", token);
-    match Client::new().get(url.as_str()).header("Authorization", authorization).send().await {
+    match ureq::get(url.as_str()).set("Authorization", &authorization).call() {
         Ok(response) => {
-            if response.status() == 200 {
-                let sites: Sites = match response.json().await {
-                    Ok(sites) => sites,
-                    Err(err) => return Err(format!("Unexpected response, {}", err))
-                };
-                Ok(sites)
-            } else {
-                Err(format!("Error getting sites list, unexpected status code {}", response.status()))
-            }
+            let sites: Sites = match response.into_json() {
+                Ok(sites) => sites,
+                Err(err) => return Err(format!("Unexpected response, {}", err))
+            };
+            Ok(sites)
         },
+        Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
         Err(_) => Err(format!("Error making request to {}", url))
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     pub const APP_NAME: &str = "rlpcli";
 
     let matches = command!()
@@ -223,7 +212,7 @@ async fn main() {
     };
 
     // Try refresh token first
-    let requested_token = match refresh_token(&host, &token).await {
+    let requested_token = match refresh_token(&host, &token) {
         Ok(refreshed_token) => {
             info!("Token refreshed successfully");
             refreshed_token
@@ -247,7 +236,7 @@ async fn main() {
                 }
             };
             trace!("Using {} (value is masked) as LESSPASS_PASS", "*".repeat(pass.len()));
-            match get_token(&host, &user, &pass).await {
+            match get_token(&host, &user, &pass) {
                 Ok(new_token) => {
                     info!("New token obtained successfully");
                     new_token
@@ -272,7 +261,7 @@ async fn main() {
     }
 
     // Get the site list
-    let mut sites = match get_sites(&host, &requested_token.access).await {
+    let mut sites = match get_sites(&host, &requested_token.access) {
         Ok(sites) => {
             info!("Site list obtained successfully");
             sites
