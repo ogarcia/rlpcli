@@ -2,12 +2,12 @@
 extern crate log;
 extern crate clap;
 extern crate xdg;
-use clap::{crate_authors, crate_version, Arg, App};
+use clap::{command, Arg, ArgAction};
 use env_logger::Builder;
 use lesspass::{Algorithm, CharacterSet, generate_entropy, generate_salt, render_password};
 use log::LevelFilter;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
 use xdg::BaseDirectories;
 
@@ -37,6 +37,8 @@ pub struct Sites {
 
 #[derive(Deserialize, Eq, Ord, PartialEq, PartialOrd, Debug)]
 pub struct Site {
+    #[serde(deserialize_with = "id_deserializer")]
+    pub id: String,
     pub site: String,
     pub login: String,
     pub lowercase: bool,
@@ -47,7 +49,23 @@ pub struct Site {
     pub counter: u32
 }
 
+/// Some server implementations (like Rockpass) store IDs in simple integers instead of strings,
+/// this function deserializes unsigned integers or strings.
+fn id_deserializer<'de, D>(deserializer: D) -> Result<String, D::Error> where D: Deserializer<'de>, {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrInteger {
+        String(String),
+        Integer(u64)
+    }
+    match StringOrInteger::deserialize(deserializer)? {
+        StringOrInteger::String(string) => Ok(string),
+        StringOrInteger::Integer(integer) => Ok(integer.to_string())
+    }
+}
+
 fn print_site(site: &Site) {
+    println!("ID: {}", site.id);
     println!("Site: {}", site.site);
     println!("Login: {}", site.login);
     println!("Lowercase: {}", site.lowercase);
@@ -140,23 +158,28 @@ async fn get_sites(host: &str, token: &str) -> Result<Sites, String> {
 async fn main() {
     pub const APP_NAME: &str = "rlpcli";
 
-    let matches = App::new(APP_NAME)
-        .version(crate_version!())
-        .author(crate_authors!())
-        .arg(Arg::with_name("site")
+    let matches = command!()
+        .arg(Arg::new("site")
              .help("site to obtain password"))
-        .arg(Arg::with_name("login")
-             .short("l")
+        .arg(Arg::new("id")
+             .short('i')
+             .long("id")
+             .help("Search or list by id instead of site")
+             .action(ArgAction::SetTrue))
+        .arg(Arg::new("login")
+             .short('l')
              .long("login")
-             .help("Print the site login instead of password"))
-        .arg(Arg::with_name("settings")
-             .short("s")
+             .help("Print the site login instead of password")
+             .action(ArgAction::SetTrue))
+        .arg(Arg::new("settings")
+             .short('s')
              .long("settings")
-             .help("Print the site settings instead of password"))
-        .arg(Arg::with_name("verbosity")
-             .short("v")
+             .help("Print the site settings instead of password")
+             .action(ArgAction::SetTrue))
+        .arg(Arg::new("verbosity")
+             .short('v')
              .long("verbose")
-             .multiple(true)
+             .action(ArgAction::Count)
              .help("Sets the level of verbosity"))
         .get_matches();
 
@@ -170,7 +193,7 @@ async fn main() {
     };
 
     // Configure loglevel
-    match matches.occurrences_of("verbosity") {
+    match matches.get_count("verbosity") {
         0 => Builder::new().filter_level(LevelFilter::Off).init(),
         1 => Builder::new().filter_level(LevelFilter::Info).init(),
         2 => Builder::new().filter_level(LevelFilter::Debug).init(),
@@ -261,67 +284,84 @@ async fn main() {
     };
 
     // Return site list or site
-    if matches.is_present("site") {
-        let site = matches.value_of("site").unwrap();
-        debug!("Looking for site {}", site);
-        match sites.results.iter().find(|&s| s.site == site) {
-            Some(site) => {
-                debug!("Site found");
-                if matches.is_present("login") {
-                    // User wants site login
-                    info!("Returning site login");
-                    println!("{}", site.login);
-                } else if matches.is_present("settings") {
-                    // User wants site settings
-                    info!("Returning site settings");
-                    print_site(site);
-                } else {
-                    // Try to get master password from environ
-                    match env::var("LESSPASS_MASTERPASS") {
-                        Ok(var) => {
-                            trace!("Using {} (value is masked) as LESSPASS_MASTERPASS", "*".repeat(var.len()));
-                            let mut charset = CharacterSet::All;
-                            if ! site.lowercase {
-                                debug!("Lowercase characters excluded");
-                                charset.remove(CharacterSet::Lowercase);
+    match matches.get_one::<String>("site") {
+        Some(site) => {
+            debug!("Looking for site {}", site);
+            // Check if the requested password is an id or a site
+            let password = if matches.get_flag("id") {
+                trace!("Searching by ID");
+                sites.results.iter().find(|&s| s.id == *site)
+            } else {
+                trace!("Searching by name");
+                sites.results.iter().find(|&s| s.site == *site)
+            };
+            match password {
+                Some(password) => {
+                    debug!("Site found");
+                    if matches.get_flag("login") {
+                        // User wants site login
+                        info!("Returning site login");
+                        println!("{}", password.login);
+                    } else if matches.get_flag("settings") {
+                        // User wants site settings
+                        info!("Returning site settings");
+                        print_site(password);
+                    } else {
+                        // Try to get master password from environ
+                        match env::var("LESSPASS_MASTERPASS") {
+                            Ok(var) => {
+                                trace!("Using {} (value is masked) as LESSPASS_MASTERPASS", "*".repeat(var.len()));
+                                let mut charset = CharacterSet::All;
+                                if ! password.lowercase {
+                                    debug!("Lowercase characters excluded");
+                                    charset.remove(CharacterSet::Lowercase);
+                                }
+                                if ! password.uppercase {
+                                    debug!("Uppercase characters excluded");
+                                    charset.remove(CharacterSet::Uppercase);
+                                }
+                                if ! password.symbols {
+                                    debug!("Symbol characters excluded");
+                                    charset.remove(CharacterSet::Symbols);
+                                }
+                                if ! password.numbers {
+                                    debug!("Numeric characters excluded");
+                                    charset.remove(CharacterSet::Numbers);
+                                }
+                                if charset.is_empty() {
+                                    println!("There is a problem with site settings, all characters have been excluded");
+                                    process::exit(0x0100);
+                                }
+                                let salt = generate_salt(&password.site, &password.login, password.counter);
+                                let entropy = generate_entropy(&var, &salt, Algorithm::SHA256, 100000);
+                                let password = render_password(&entropy, charset, password.length.into());
+                                info!("Returning site password");
+                                println!("{}", password);
+                            },
+                            // Master password not suplied, print all site settings
+                            Err(_) => {
+                                info!("Master password not suplied, returning site settings");
+                                print_site(password);
                             }
-                            if ! site.uppercase {
-                                debug!("Uppercase characters excluded");
-                                charset.remove(CharacterSet::Uppercase);
-                            }
-                            if ! site.symbols {
-                                debug!("Symbol characters excluded");
-                                charset.remove(CharacterSet::Symbols);
-                            }
-                            if ! site.numbers {
-                                debug!("Numeric characters excluded");
-                                charset.remove(CharacterSet::Numbers);
-                            }
-                            if charset.is_empty() {
-                                println!("There is a problem with site settings, all characters have been excluded");
-                                process::exit(0x0100);
-                            }
-                            let salt = generate_salt(&site.site, &site.login, site.counter);
-                            let entropy = generate_entropy(&var, &salt, Algorithm::SHA256, 100000);
-                            let password = render_password(&entropy, charset, site.length.into());
-                            info!("Returning site password");
-                            println!("{}", password);
-                        },
-                        // Master password not suplied, print all site settings
-                        Err(_) => {
-                            info!("Master password not suplied, returning site settings");
-                            print_site(site);
                         }
-                    };
+                    }
+                },
+                None => println!("Site '{}' not found in site list", site)
+            }
+        },
+        None => {
+            info!("Returning site list");
+            if matches.get_flag("id") {
+                sites.results.sort();
+                for site in sites.results.iter() {
+                    println!("{}: {}", site.id, site.site);
                 }
-            },
-            None => println!("Site '{}' not found in site list", site)
-        };
-    } else {
-        info!("Returning site list");
-        sites.results.sort();
-        for site in sites.results.iter() {
-            println!("{}", site.site);
+            } else {
+                sites.results.sort_by_key(|k| k.site.clone());
+                for site in sites.results.iter() {
+                    println!("{}", site.site);
+                }
+            }
         }
     }
 }

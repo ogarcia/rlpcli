@@ -3,8 +3,12 @@
 A tiny CLI helper written in [Rust][1] to get [LessPass][2] paswords and
 site settings directly from a LessPass server.
 
+If you are looking for a full implementation of client and library see
+[lesspass-client][3].
+
 [1]: https://www.rust-lang.org/
 [2]: https://lesspass.com/
+[3]: https://github.com/ogarcia/lesspass-client
 
 ## Installation
 
@@ -20,9 +24,8 @@ Arch Linux user you can install it from [AUR][package].
 
 #### Installing Rust
 
-rlpcli build has been tested with current Rust stable release version
-1.57.0. You can install Rust from your distribution package or [use
-`rustup`](rustup).
+rlpcli build has been tested with current Rust stable release version. You
+can install Rust from your distribution package or [use `rustup`][rustup].
 ```
 rustup default stable
 ```
