@@ -1,32 +1,34 @@
 #[macro_use]
 extern crate log;
-extern crate clap;
-extern crate xdg;
+
 use clap::{command, Arg, ArgAction};
 use env_logger::Builder;
 use lesspass::{Algorithm, CharacterSet, generate_entropy, generate_salt, render_password};
 use log::LevelFilter;
 use serde::{Deserialize, Deserializer, Serialize};
+use ureq::Agent;
 use url::Url;
 use xdg::BaseDirectories;
 
 use std::{env, fs, path, process};
 
+const APP_NAME: &str = "rlpcli";
+
 #[derive(Serialize, Debug)]
-pub struct Auth {
-    pub email: String,
-    pub password: String
+struct Auth {
+    email: String,
+    password: String
 }
 
 #[derive(Serialize, Debug)]
-pub struct Refresh {
-    pub refresh: String
+struct Refresh {
+    refresh: String
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Token {
-    pub access: String,
-    pub refresh: String
+struct Token {
+    access: String,
+    refresh: String
 }
 
 #[derive(Deserialize, Debug)]
@@ -75,78 +77,151 @@ fn print_site(site: &Site) {
     println!("Couter: {}", site.counter);
 }
 
-fn build_url(host: &str, path: &str) -> Url {
-    let host_url = match Url::parse(&host) {
-        Ok(host) => host,
-        Err(_) => {
-            println!("LESSPASS_HOST is not a valid URL");
-            process::exit(0x0100);
+struct LessPassAuthenticatedClient<'a> {
+    host: &'a Url,
+    token: String,
+    agent: &'a Agent
+}
+
+struct LessPassClient {
+    host: Url,
+    auth: Option<Auth>,
+    agent: Agent
+}
+
+impl LessPassAuthenticatedClient<'_> {
+    fn get_sites(&self) -> Result<Sites, String> {
+        // Safe to unwrap as host has been checked before
+        let url = self.host.join("passwords/").unwrap();
+        let authorization = format!("Bearer {}", self.token);
+        match self.agent.get(url.as_str()).set("Authorization", &authorization).call() {
+            Ok(response) => {
+                let sites: Sites = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
+                Ok(sites)
+            },
+            Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
+            Err(_) => Err(format!("Error making request to {}", url))
         }
-    };
-    host_url.join(path).unwrap()
-}
-
-fn get_token(host: &str, user: &str, pass: &str) -> Result<Token, String> {
-    let url = build_url(host, "auth/jwt/create/");
-    let auth = Auth {
-        email: String::from(user),
-        password: String::from(pass)
-    };
-    match ureq::post(url.as_str()).send_json(&auth) {
-        Ok(response) => {
-            let token: Token = match response.into_json() {
-                Ok(token) => token,
-                Err(err) => return Err(format!("Unexpected response, {}", err))
-            };
-            Ok(token)
-        },
-        Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
-        Err(_) => Err(format!("Error making request to {}", url))
     }
 }
 
-fn refresh_token(host: &str, token: &str) -> Result<Token, String> {
-    // If token is empty simply return an error
-    if token == "" || token == "\n" {
-        debug!("Token file does not exists or is empty");
-        return Err("Invalid token found".to_string())
+impl LessPassClient {
+    /// Configure the client itself
+    fn new(host: Url, user: Option<String>, pass: Option<String>) -> LessPassClient {
+        LessPassClient {
+            host,
+            auth: if user.is_some() && pass.is_some() {
+                Some(Auth {
+                    // Safe to unwrap as they have been checked before
+                    email: user.unwrap(),
+                    password: pass.unwrap()
+                })
+            } else {
+                None
+            },
+            agent: Agent::new()
+        }
     }
-    let url = build_url(host, "auth/jwt/refresh/");
-    let refresh = Refresh {
-        refresh: String::from(token)
-    };
-    match ureq::post(url.as_str()).send_json(&refresh) {
-        Ok(response) => {
-            let token: Token = match response.into_json() {
-                Ok(token) => token,
-                Err(err) => return Err(format!("Unexpected response, {}", err))
-            };
-            Ok(token)
-        },
-        Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
-        Err(_) => Err(format!("Error making request to {}", url))
-    }
-}
 
-fn get_sites(host: &str, token: &str) -> Result<Sites, String> {
-    let url = build_url(host, "passwords/");
-    let authorization = format!("Bearer {}", token);
-    match ureq::get(url.as_str()).set("Authorization", &authorization).call() {
-        Ok(response) => {
-            let sites: Sites = match response.into_json() {
-                Ok(sites) => sites,
-                Err(err) => return Err(format!("Unexpected response, {}", err))
-            };
-            Ok(sites)
-        },
-        Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
-        Err(_) => Err(format!("Error making request to {}", url))
+    /// Perform authentication
+    fn auth(&self) -> Result<LessPassAuthenticatedClient, String> {
+        // Try to get token form cache file
+        let token_cache_file = match BaseDirectories::with_prefix(APP_NAME) {
+            Ok(base_directories) => {
+                match base_directories.place_cache_file("token") {
+                    Ok(token_cache_file) => {
+                        info!("Using cache file {} for read and store token", token_cache_file.as_path().display());
+                        token_cache_file
+                    },
+                    Err(e) => {
+                        warn!("There is a problem accessing to cache file caused by {}, disabling cache", e);
+                        path::PathBuf::new()
+                    }
+                }
+            },
+            Err(e) => {
+                warn!("There is a problem getting base directories caused by {}, disabling cache", e);
+                path::PathBuf::new()
+            }
+        };
+        let token = if token_cache_file == path::PathBuf::new() {
+            String::new()
+        } else {
+            fs::read_to_string(token_cache_file.as_path()).unwrap_or(String::new())
+        };
+        trace!("Current token '{}'", token);
+        // Try refresh token
+        let refreshed_token = match self.refresh_token(&token) {
+            Ok(refreshed_token) => refreshed_token,
+            Err(_) => {
+                // Token cannot be refreshed we need to obtain a new one
+                warn!("The stored token has expired or is invalid, it is necessary to re-authenticate with username and password");
+                self.get_token()?
+            }
+        };
+        trace!("Access token '{}'", refreshed_token.access);
+        trace!("Refresh token '{}'", refreshed_token.refresh);
+        // Save the new refresh token
+        if token_cache_file != path::PathBuf::new() {
+            match fs::write(token_cache_file.as_path(), &refreshed_token.refresh) {
+                Ok(_) => debug!("Refreshed token stored successfully"),
+                Err(e) => warn!("There is a problem storing refreshed token file caused by {}", e)
+            }
+        }
+        Ok(LessPassAuthenticatedClient {
+            host: &self.host,
+            token: refreshed_token.access,
+            agent: &self.agent
+        })
+    }
+
+    /// Call to obtain a new access and refresh token using user and password
+    fn get_token(&self) -> Result<Token, String> {
+        // Safe to unwrap as host has been checked before
+        let url = self.host.join("auth/jwt/create/").unwrap();
+        match &self.auth {
+            Some(auth) => {
+                trace!("Using {} as LESSPASS_USER", auth.email);
+                trace!("Using {} (value is masked) as LESSPASS_PASS", "*".repeat(auth.password.len()));
+                match self.agent.post(url.as_str()).send_json(&auth) {
+                    Ok(response) => {
+                        let token: Token = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
+                        info!("Token created successfully");
+                        Ok(token)
+                    },
+                    Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
+                    Err(_) => Err(format!("Error making request to {}", url))
+                }
+            },
+            None => Err(String::from("You must set the environment variables LESSPASS_USER and LESSPASS_PASS"))
+        }
+    }
+
+    /// Call to obtain a new access and refresh token using a refresh token
+    fn refresh_token(&self, token: &str) -> Result<Token, String> {
+        // If token is empty simply return an error
+        if token == "" || token == "\n" {
+            debug!("Token file does not exists or is empty");
+            return Err(String::from("Invalid token found"))
+        }
+        // Safe to unwrap as host has been checked before
+        let url = self.host.join("auth/jwt/refresh/").unwrap();
+        let refresh = Refresh {
+            refresh: String::from(token)
+        };
+        match self.agent.post(url.as_str()).send_json(&refresh) {
+            Ok(response) => {
+                let token: Token = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
+                info!("Token refreshed successfully");
+                Ok(token)
+            },
+            Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
+            Err(_) => Err(format!("Error making request to {}", url))
+        }
     }
 }
 
 fn main() {
-    pub const APP_NAME: &str = "rlpcli";
-
     let matches = command!()
         .arg(Arg::new("site")
              .help("site to obtain password"))
@@ -171,16 +246,20 @@ fn main() {
              .action(ArgAction::Count)
              .help("Sets the level of verbosity"))
         .get_matches();
-
     // Read mandatory environment variable HOST
     let host = match env::var("LESSPASS_HOST") {
-        Ok(var) => var,
+        Ok(host) => match Url::parse(&host) {
+            Ok(host) => host,
+            Err(_) => {
+                println!("LESSPASS_HOST is not a valid URL");
+                process::exit(0x0100);
+            }
+        },
         Err(_) => {
             println!("You must configure LESSPASS_HOST environment variable");
             process::exit(0x0100);
         }
     };
-
     // Configure loglevel
     match matches.get_count("verbosity") {
         0 => Builder::new().filter_level(LevelFilter::Off).init(),
@@ -188,80 +267,23 @@ fn main() {
         2 => Builder::new().filter_level(LevelFilter::Debug).init(),
         3 | _ => Builder::new().filter_level(LevelFilter::Trace).init()
     };
-
     info!("Log level {:?}", log::max_level());
     trace!("Using {} as LESSPASS_HOST", host);
-
-    // Try to get token form cache file
-    let token_cache_file = match BaseDirectories::with_prefix(APP_NAME).unwrap().place_cache_file("token") {
-        Ok(token_cache_file) => {
-            debug!("Using cache file {} for read and store token", token_cache_file.as_path().display());
-            token_cache_file
-        },
-        Err(err) => {
-            warn!("There is a problem accessing to cache file caused by {}, disabling cache", err);
-            path::PathBuf::new()
+    // Get user and pass
+    let user = env::var("LESSPASS_USER").ok();
+    let pass = env::var("LESSPASS_PASS").ok();
+    // Configure client
+    let lesspass_client = LessPassClient::new(host, user, pass);
+    // Configure client and perform auth
+    let lesspass_authenticated_client = match lesspass_client.auth() {
+        Ok(authenticated_client) => authenticated_client,
+        Err(e) => {
+            println!("{}", e);
+            process::exit(0x0100);
         }
     };
-    let token = match fs::read_to_string(token_cache_file.as_path()) {
-        Ok(token) => {
-            trace!("Current token '{}'", token);
-            token
-        },
-        Err(_) => String::from("")
-    };
-
-    // Try refresh token first
-    let requested_token = match refresh_token(&host, &token) {
-        Ok(refreshed_token) => {
-            info!("Token refreshed successfully");
-            refreshed_token
-        },
-        Err(_) => {
-            // Token cannot be refreshed we need to obtain a new one
-            warn!("Stored token is expired or invalid, it is necessary to re-authenticate with username and password");
-            let user = match env::var("LESSPASS_USER") {
-                Ok(var) => var,
-                Err(_) => {
-                    println!("You must configure LESSPASS_USER environment variable");
-                    process::exit(0x0100);
-                }
-            };
-            trace!("Using {} as LESSPASS_USER", user);
-            let pass = match env::var("LESSPASS_PASS") {
-                Ok(var) => var,
-                Err(_) => {
-                    println!("You must configure LESSPASS_PASS environment variable");
-                    process::exit(0x0100);
-                }
-            };
-            trace!("Using {} (value is masked) as LESSPASS_PASS", "*".repeat(pass.len()));
-            match get_token(&host, &user, &pass) {
-                Ok(new_token) => {
-                    info!("New token obtained successfully");
-                    new_token
-                },
-                Err(err) => {
-                    println!("{}", err);
-                    process::exit(0x0100);
-                }
-            }
-        }
-    };
-
-    trace!("Access token '{}'", requested_token.access);
-    trace!("Refresh token '{}'", requested_token.refresh);
-
-    // Save new refresh token
-    if token_cache_file != path::PathBuf::new() {
-        match fs::write(token_cache_file.as_path(), &requested_token.refresh) {
-            Ok(_) => debug!("Refreshed token stored successfully"),
-            Err(err) => warn!("There is a problem storing refreshed token file caused by {}", err)
-        };
-    }
-
     // Get the site list
-    let mut sites = match get_sites(&host, &requested_token.access) {
+    let mut sites = match lesspass_authenticated_client.get_sites() {
         Ok(sites) => {
             info!("Site list obtained successfully");
             sites
@@ -271,7 +293,6 @@ fn main() {
             process::exit(0x0100);
         }
     };
-
     // Return site list or site
     match matches.get_one::<String>("site") {
         Some(site) => {
