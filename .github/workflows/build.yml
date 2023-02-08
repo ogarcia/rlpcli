@@ -7,16 +7,27 @@ jobs:
     name: Build rlpcli
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          override: true
-      - uses: actions-rs/cargo@v1
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package current compilation
+        id: package-current
+        run: |
+          install -Dm755 "target/release/rlpcli" "rlpcli-${GITHUB_REF##*/}-${GITHUB_SHA}/rlpcli"
+          install -Dm644 "README.md" "rlpcli-${GITHUB_REF##*/}-${GITHUB_SHA}/README.md"
+          install -Dm644 "LICENSE" "rlpcli-${GITHUB_REF##*/}-${GITHUB_SHA}/LICENSE"
+          echo "version=${GITHUB_REF##*/}-${GITHUB_SHA}" >> $GITHUB_OUTPUT
+      - name: Archive current compilation
+        uses: actions/upload-artifact@v3
         with:
-          command: build
-          args: --release --locked
-      - name: package
+          name: "rlpcli-${{ steps.package-current.outputs.version }}"
+          path: "rlpcli-${{ steps.package-current.outputs.version }}/"
+      - name: Package tagged compilation
         id: package
         if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request'
         run: |
@@ -25,7 +36,8 @@ jobs:
           install -Dm644 "LICENSE" "rlpcli-${GITHUB_REF##*/}/LICENSE"
           tar cvJf "rlpcli-${GITHUB_REF##*/}.tar.xz" "rlpcli-${GITHUB_REF##*/}"
           echo "version=${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
-      - uses: softprops/action-gh-release@v1
+      - name: Release
+        uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request'
         with:
           files: "rlpcli-${{ steps.package.outputs.version }}.tar.xz"

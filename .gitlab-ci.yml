@@ -1,0 +1,75 @@
+default:
+  image: alpine:latest
+
+variables:
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/rlpcli/${CI_COMMIT_TAG}"
+  PACKAGE: rlpcli-release-${CI_COMMIT_TAG}.tar.xz
+
+stages:
+  - Build
+  - Package
+  - Publish
+  - Release
+
+Build rlpcli:
+  stage: Build
+  image: rust:alpine
+  script:
+    - apk -U --no-progress add libc-dev
+    - cargo build --release --locked
+  artifacts:
+    name: rlpcli-${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHA}
+    paths:
+      - target/release/rlpcli
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - target
+
+Package rlpcli:
+  stage: Package
+  script:
+    - apk -U --no-progress add xz
+    - install -Dm755 "target/release/rlpcli" "rlpcli-${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHA}/rlpcli"
+    - install -Dm644 "README.md" "rlpcli-${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHA}/README.md"
+    - install -Dm644 "LICENSE" "rlpcli-${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHA}/LICENSE"
+    - tar cvJf "rlpcli-${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHA}.tar.xz" "rlpcli-${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHA}"
+  artifacts:
+    name: rlpcli-package-${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHA}
+    paths:
+      - rlpcli-${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHA}.tar.xz
+  rules:
+    - if: $CI_COMMIT_TAG == null
+
+Package rlpcli release:
+  stage: Package
+  script:
+    - apk -U --no-progress add xz
+    - install -Dm755 "target/release/rlpcli" "rlpcli-${CI_COMMIT_TAG}/rlpcli"
+    - install -Dm644 "README.md" "rlpcli-${CI_COMMIT_TAG}/README.md"
+    - install -Dm644 "LICENSE" "rlpcli-${CI_COMMIT_TAG}/LICENSE"
+    - tar cvJf ${PACKAGE} "rlpcli-${CI_COMMIT_TAG}"
+  artifacts:
+    name: rlpcli-release-package-${CI_COMMIT_TAG}
+    paths:
+      - ${PACKAGE}
+  rules:
+    - if: $CI_COMMIT_TAG && $CI_PROJECT_ID == "43321553"
+
+Publish rlpcli release:
+  stage: Publish
+  image: curlimages/curl:latest
+  script:
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file ${PACKAGE} "${PACKAGE_REGISTRY_URL}/${PACKAGE}"
+  rules:
+    - if: $CI_COMMIT_TAG && $CI_PROJECT_ID == "43321553"
+
+Release:
+  stage: Release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  script: |
+    release-cli create --name "Release ${CI_COMMIT_TAG}" --tag-name ${CI_COMMIT_TAG} \
+      --assets-link "{\"name\":\"${PACKAGE}\",\"url\":\"${PACKAGE_REGISTRY_URL}/${PACKAGE}\"}"
+  rules:
+    - if: $CI_COMMIT_TAG && $CI_PROJECT_ID == "43321553"
