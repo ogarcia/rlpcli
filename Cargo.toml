@@ -17,5 +17,5 @@ lesspass = "0.4.0"
 log = "0.4.17"
 serde = { version = "1.0.152", features = ["derive"] }
 ureq = { version = "2.6.2", features = ["json"] }
-url = "2.3.1"
+url = "2.5.0"
 xdg = "2.4.1"
