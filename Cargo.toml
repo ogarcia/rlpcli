@@ -14,7 +14,7 @@ categories = ["command-line-utilities"]
 clap = { version = "4.1.4", features = ["cargo"] }
 env_logger = "0.10.0"
 lesspass = "0.4.0"
-log = "0.4.17"
+log = "0.4.21"
 serde = { version = "1.0.152", features = ["derive"] }
 ureq = { version = "2.6.2", features = ["json"] }
 url = "2.3.1"
