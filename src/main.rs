@@ -1,18 +1,20 @@
-#[macro_use]
-extern crate log;
+//
+// rlpcli
+// Copyright (C) 2021-2024 Óscar García Amor <ogarcia@connectical.com>
+// Distributed under terms of the GNU GPLv3 license.
+//
 
 use clap::{command, Arg, ArgAction};
-use env_logger::Builder;
+use env_logger::{Builder, Env};
 use lesspass::{Algorithm, CharacterSet, generate_entropy, generate_salt, render_password};
-use log::LevelFilter;
+use log::{debug, info, trace, warn, LevelFilter};
 use serde::{Deserialize, Deserializer, Serialize};
+use std::{env, cell::OnceCell, fs, path, process::ExitCode};
 use ureq::Agent;
 use url::Url;
 use xdg::BaseDirectories;
 
-use std::{env, fs, path, process};
-
-const APP_NAME: &str = "rlpcli";
+const APP_NAME: &str = env!("CARGO_PKG_NAME");
 
 #[derive(Serialize, Debug)]
 struct Auth {
@@ -65,44 +67,11 @@ fn id_deserializer<'de, D>(deserializer: D) -> Result<String, D::Error> where D:
     }
 }
 
-fn print_site(site: &Site) {
-    println!("ID: {}", site.id);
-    println!("Site: {}", site.site);
-    println!("Login: {}", site.login);
-    println!("Lowercase: {}", site.lowercase);
-    println!("Uppercase: {}", site.uppercase);
-    println!("Symbols: {}", site.symbols);
-    println!("Numbers: {}", site.numbers);
-    println!("Length: {}", site.length);
-    println!("Couter: {}", site.counter);
-}
-
-struct LessPassAuthenticatedClient<'a> {
-    host: &'a Url,
-    token: String,
-    agent: &'a Agent
-}
-
 struct LessPassClient {
     host: Url,
     auth: Option<Auth>,
+    token: OnceCell<Token>,
     agent: Agent
-}
-
-impl LessPassAuthenticatedClient<'_> {
-    fn get_sites(&self) -> Result<Sites, String> {
-        // Safe to unwrap as host has been checked before
-        let url = self.host.join("passwords/").unwrap();
-        let authorization = format!("Bearer {}", self.token);
-        match self.agent.get(url.as_str()).set("Authorization", &authorization).call() {
-            Ok(response) => {
-                let sites: Sites = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
-                Ok(sites)
-            },
-            Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
-            Err(_) => Err(format!("Error making request to {}", url))
-        }
-    }
 }
 
 impl LessPassClient {
@@ -112,19 +81,20 @@ impl LessPassClient {
             host,
             auth: if user.is_some() && pass.is_some() {
                 Some(Auth {
-                    // Safe to unwrap as they have been checked before
+                    // Safe to unwrap as they have just been checked
                     email: user.unwrap(),
                     password: pass.unwrap()
                 })
             } else {
                 None
             },
+            token: OnceCell::new(),
             agent: Agent::new()
         }
     }
 
     /// Perform authentication
-    fn auth(&self) -> Result<LessPassAuthenticatedClient, String> {
+    fn auth(&self) -> Result<(), String> {
         // Try to get token form cache file
         let token_cache_file = match BaseDirectories::with_prefix(APP_NAME) {
             Ok(base_directories) => {
@@ -168,11 +138,8 @@ impl LessPassClient {
                 Err(e) => warn!("There is a problem storing refreshed token file caused by {}", e)
             }
         }
-        Ok(LessPassAuthenticatedClient {
-            host: &self.host,
-            token: refreshed_token.access,
-            agent: &self.agent
-        })
+        // Stores the token in the client
+        self.token.set(refreshed_token).map_err(|_| String::from("It is not possible to call this function more than once"))
     }
 
     /// Call to obtain a new access and refresh token using user and password
@@ -183,7 +150,7 @@ impl LessPassClient {
             Some(auth) => {
                 trace!("Using {} as LESSPASS_USER", auth.email);
                 trace!("Using {} (value is masked) as LESSPASS_PASS", "*".repeat(auth.password.len()));
-                match self.agent.post(url.as_str()).send_json(&auth) {
+                match self.agent.post(url.as_str()).send_json(auth) {
                     Ok(response) => {
                         let token: Token = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
                         info!("Token created successfully");
@@ -200,7 +167,7 @@ impl LessPassClient {
     /// Call to obtain a new access and refresh token using a refresh token
     fn refresh_token(&self, token: &str) -> Result<Token, String> {
         // If token is empty simply return an error
-        if token == "" || token == "\n" {
+        if token.is_empty() || token == "\n" {
             debug!("Token file does not exists or is empty");
             return Err(String::from("Invalid token found"))
         }
@@ -209,7 +176,7 @@ impl LessPassClient {
         let refresh = Refresh {
             refresh: String::from(token)
         };
-        match self.agent.post(url.as_str()).send_json(&refresh) {
+        match self.agent.post(url.as_str()).send_json(refresh) {
             Ok(response) => {
                 let token: Token = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
                 info!("Token refreshed successfully");
@@ -219,9 +186,80 @@ impl LessPassClient {
             Err(_) => Err(format!("Error making request to {}", url))
         }
     }
+
+    fn get_sites(&self) -> Result<Sites, String> {
+        // Safe to unwrap as host has been checked before
+        let url = self.host.join("passwords/").unwrap();
+        let token = match self.token.get() {
+            Some(token) => &token.access,
+            None => return Err(String::from("A token must be obtained first"))
+        };
+        let authorization = format!("Bearer {}", token);
+        match self.agent.get(url.as_str()).set("Authorization", &authorization).call() {
+            Ok(response) => {
+                let sites: Sites = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
+                Ok(sites)
+            },
+            Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
+            Err(_) => Err(format!("Error making request to {}", url))
+        }
+    }
 }
 
-fn main() {
+
+fn format_site(site: &Site) -> String {
+    let mut fmt_site = String::new();
+    fmt_site.push_str("ID: ");
+    fmt_site.push_str(&site.id);
+    fmt_site.push_str("\nSite: ");
+    fmt_site.push_str(&site.site);
+    fmt_site.push_str("\nLogin: ");
+    fmt_site.push_str(&site.login);
+    fmt_site.push_str("\nLowercase: ");
+    fmt_site.push_str(&site.lowercase.to_string());
+    fmt_site.push_str("\nUppercase: ");
+    fmt_site.push_str(&site.uppercase.to_string());
+    fmt_site.push_str("\nSymbols: ");
+    fmt_site.push_str(&site.symbols.to_string());
+    fmt_site.push_str("\nNumbers: ");
+    fmt_site.push_str(&site.numbers.to_string());
+    fmt_site.push_str("\nLength: ");
+    fmt_site.push_str(&site.length.to_string());
+    fmt_site.push_str("\nCouter: ");
+    fmt_site.push_str(&site.counter.to_string());
+    fmt_site
+}
+
+fn get_password(master_password: &str, site: &Site) -> Result<String, String> {
+    trace!("Using {} (value is masked) as LESSPASS_MASTERPASS", "*".repeat(master_password.len()));
+    let mut charset = CharacterSet::All;
+    if ! site.lowercase {
+        debug!("Lowercase characters excluded");
+        charset.remove(CharacterSet::Lowercase);
+    }
+    if ! site.uppercase {
+        debug!("Uppercase characters excluded");
+        charset.remove(CharacterSet::Uppercase);
+    }
+    if ! site.symbols {
+        debug!("Symbol characters excluded");
+        charset.remove(CharacterSet::Symbols);
+    }
+    if ! site.numbers {
+        debug!("Numeric characters excluded");
+        charset.remove(CharacterSet::Numbers);
+    }
+    if charset.is_empty() {
+        return Err(String::from("There is a problem with site settings, all characters have been excluded"))
+    }
+    let salt = generate_salt(&site.site, &site.login, site.counter);
+    let entropy = generate_entropy(&master_password, &salt, Algorithm::SHA256, 100000);
+    let password = render_password(&entropy, charset, site.length.into());
+    info!("Returning site password");
+    Ok(password)
+}
+
+fn main() -> ExitCode {
     let matches = command!()
         .arg(Arg::new("site")
              .help("site to obtain password"))
@@ -252,45 +290,45 @@ fn main() {
             Ok(host) => host,
             Err(_) => {
                 println!("LESSPASS_HOST is not a valid URL");
-                process::exit(0x0100);
+                return ExitCode::FAILURE
             }
         },
         Err(_) => {
             println!("You must configure LESSPASS_HOST environment variable");
-            process::exit(0x0100);
+            return ExitCode::FAILURE
         }
     };
     // Configure loglevel
     match matches.get_count("verbosity") {
-        0 => Builder::new().filter_level(LevelFilter::Off).init(),
+        0 => Builder::from_env(Env::default().filter_or(format!("{}_LOGLEVEL", APP_NAME.to_uppercase()), "off")).init(),
         1 => Builder::new().filter_level(LevelFilter::Info).init(),
         2 => Builder::new().filter_level(LevelFilter::Debug).init(),
-        3 | _ => Builder::new().filter_level(LevelFilter::Trace).init()
+        _ => Builder::new().filter_level(LevelFilter::Trace).init()
     };
     info!("Log level {:?}", log::max_level());
-    trace!("Using {} as LESSPASS_HOST", host);
+    debug!("Using {} as LESSPASS_HOST", host);
     // Get user and pass
     let user = env::var("LESSPASS_USER").ok();
     let pass = env::var("LESSPASS_PASS").ok();
     // Configure client
     let lesspass_client = LessPassClient::new(host, user, pass);
-    // Configure client and perform auth
-    let lesspass_authenticated_client = match lesspass_client.auth() {
-        Ok(authenticated_client) => authenticated_client,
-        Err(e) => {
-            println!("{}", e);
-            process::exit(0x0100);
-        }
-    };
-    // Get the site list
-    let mut sites = match lesspass_authenticated_client.get_sites() {
-        Ok(sites) => {
-            info!("Site list obtained successfully");
-            sites
+    // Perform auth and get the site list
+    let mut sites = match lesspass_client.auth() {
+        Ok(()) => {
+            match lesspass_client.get_sites() {
+                Ok(sites) => {
+                    info!("Site list obtained successfully");
+                    sites
+                },
+                Err(err) => {
+                    println!("{}", err);
+                    return ExitCode::FAILURE
+                }
+            }
         },
         Err(err) => {
             println!("{}", err);
-            process::exit(0x0100);
+            return ExitCode::FAILURE
         }
     };
     // Return site list or site
@@ -315,43 +353,21 @@ fn main() {
                     } else if matches.get_flag("settings") {
                         // User wants site settings
                         info!("Returning site settings");
-                        print_site(password);
+                        println!("{}", format_site(password));
                     } else {
                         // Try to get master password from environ
                         match env::var("LESSPASS_MASTERPASS") {
-                            Ok(var) => {
-                                trace!("Using {} (value is masked) as LESSPASS_MASTERPASS", "*".repeat(var.len()));
-                                let mut charset = CharacterSet::All;
-                                if ! password.lowercase {
-                                    debug!("Lowercase characters excluded");
-                                    charset.remove(CharacterSet::Lowercase);
+                            Ok(var) => match get_password(&var, &password) {
+                                Ok(password) => println!("{}", password),
+                                Err(err) => {
+                                    println!("{}", err);
+                                    return ExitCode::FAILURE
                                 }
-                                if ! password.uppercase {
-                                    debug!("Uppercase characters excluded");
-                                    charset.remove(CharacterSet::Uppercase);
-                                }
-                                if ! password.symbols {
-                                    debug!("Symbol characters excluded");
-                                    charset.remove(CharacterSet::Symbols);
-                                }
-                                if ! password.numbers {
-                                    debug!("Numeric characters excluded");
-                                    charset.remove(CharacterSet::Numbers);
-                                }
-                                if charset.is_empty() {
-                                    println!("There is a problem with site settings, all characters have been excluded");
-                                    process::exit(0x0100);
-                                }
-                                let salt = generate_salt(&password.site, &password.login, password.counter);
-                                let entropy = generate_entropy(&var, &salt, Algorithm::SHA256, 100000);
-                                let password = render_password(&entropy, charset, password.length.into());
-                                info!("Returning site password");
-                                println!("{}", password);
                             },
                             // Master password not suplied, print all site settings
                             Err(_) => {
                                 info!("Master password not suplied, returning site settings");
-                                print_site(password);
+                                println!("{}", format_site(password));
                             }
                         }
                     }
@@ -373,5 +389,177 @@ fn main() {
                 }
             }
         }
+    }
+    ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const AH: (&str, &str) = ("authorization", "Bearer access_token");
+    const JH: (&str, &str) = ("content-type", "application/json");
+
+    #[test]
+    fn get_token() {
+        let mut server = mockito::Server::new();
+        let url = Url::parse(&server.url()).unwrap();
+        let client = LessPassClient::new(url, Some("user".to_string()), Some("pass".to_string()));
+        let request_body = r#"{"email":"user","password":"pass"}"#;
+        let response_body = r#"{"access":"access_token","refresh":"refresh_token"}"#;
+        let mock = server.mock("POST", "/auth/jwt/create/")
+            .with_status(200)
+            .with_header(JH.0, JH.1)
+            .match_body(mockito::Matcher::JsonString(request_body.to_string()))
+            .with_body(response_body)
+            .create();
+        let token = client.get_token().unwrap();
+        assert_eq!("access_token", token.access);
+        assert_eq!("refresh_token", token.refresh);
+        mock.assert();
+        let response_body = "{}";
+        let mock = server.mock("POST", "/auth/jwt/create/")
+            .with_status(200)
+            .with_header(JH.0, JH.1)
+            .match_body(mockito::Matcher::JsonString(request_body.to_string()))
+            .with_body(response_body)
+            .create();
+        let token = client.get_token();
+        assert!(token.is_err());
+        mock.assert();
+    }
+
+    #[test]
+    fn refresh_token() {
+        let mut server = mockito::Server::new();
+        let url = Url::parse(&server.url()).unwrap();
+        let client = LessPassClient::new(url, Some("user".to_string()), Some("pass".to_string()));
+        let request_body = r#"{"refresh":"sometoken"}"#;
+        let response_body = r#"{"access":"access_token","refresh":"refresh_token"}"#;
+        let mock = server.mock("POST", "/auth/jwt/refresh/")
+            .with_status(200)
+            .with_header(JH.0, JH.1)
+            .match_body(mockito::Matcher::JsonString(request_body.to_string()))
+            .with_body(response_body)
+            .create();
+        let token = client.refresh_token("sometoken").unwrap();
+        assert_eq!("access_token", token.access);
+        assert_eq!("refresh_token", token.refresh);
+        mock.assert();
+        let request_body = r#"{"refresh":"badtoken"}"#;
+        let response_body = "{}";
+        let mock = server.mock("POST", "/auth/jwt/refresh/")
+            .with_status(200)
+            .with_header(JH.0, JH.1)
+            .match_body(mockito::Matcher::JsonString(request_body.to_string()))
+            .with_body(response_body)
+            .create();
+        let token = client.refresh_token("badtoken");
+        assert!(token.is_err());
+        mock.assert();
+    }
+
+    #[test]
+    fn get_sites() {
+        let mut server = mockito::Server::new();
+        let url = Url::parse(&server.url()).unwrap();
+        let client = LessPassClient::new(url, None, None);
+        client.token.set(Token {
+            access: "access_token".to_string(),
+            refresh: "refresh_token".to_string()
+        }).unwrap();
+        let response_body = r#"{"results":[{"id":"1","site":"site","login":"login","lowercase":true,"uppercase":true,"symbols":true,"numbers":false,"length":20,"counter":1},
+        {"id":2,"site":"othersite","login":"otherlogin","lowercase":false,"uppercase":false,"symbols":false,"numbers":true,"length":30,"counter":10}]}"#;
+        let mock = server.mock("GET", "/passwords/")
+            .with_status(200)
+            .with_header(JH.0, JH.1)
+            .match_header(AH.0, AH.1)
+            .with_body(response_body)
+            .create();
+        let sites = client.get_sites().unwrap();
+        assert_eq!("1".to_string(), sites.results[0].id);
+        assert_eq!("2".to_string(), sites.results[1].id);
+        assert_eq!("site".to_string(), sites.results[0].site);
+        assert_eq!("othersite".to_string(), sites.results[1].site);
+        assert_eq!("login".to_string(), sites.results[0].login);
+        assert_eq!("otherlogin".to_string(), sites.results[1].login);
+        assert!(sites.results[0].lowercase);
+        assert!(sites.results[0].uppercase);
+        assert!(sites.results[0].symbols);
+        assert!(sites.results[1].numbers);
+        assert_eq!(20, sites.results[0].length);
+        assert_eq!(30, sites.results[1].length);
+        assert_eq!(1, sites.results[0].counter);
+        assert_eq!(10, sites.results[1].counter);
+        mock.assert();
+        let response_body = "{}";
+        let mock = server.mock("GET", "/passwords/")
+            .with_status(200)
+            .with_header(JH.0, JH.1)
+            .with_body(response_body)
+            .create();
+        let sites = client.get_sites();
+        assert!(sites.is_err());
+        mock.assert();
+    }
+
+    #[test]
+    fn fmt_site() {
+        let site = Site {
+            id: "uuid".to_string(),
+            site: "site".to_string(),
+            login: "login".to_string(),
+            lowercase: true,
+            uppercase: true,
+            symbols: false,
+            numbers: true,
+            length: 254,
+            counter: 12345
+        };
+        let fmt_site = format_site(&site);
+        assert_eq!("ID: uuid\nSite: site\nLogin: login\nLowercase: true\nUppercase: true\nSymbols: false\nNumbers: true\nLength: 254\nCouter: 12345".to_string(), fmt_site);
+    }
+
+    #[test]
+    fn get_passwd() {
+        let site = Site {
+            id: "uuid".to_string(),
+            site: "site".to_string(),
+            login: "login".to_string(),
+            lowercase: true,
+            uppercase: true,
+            symbols: false,
+            numbers: true,
+            length: 25,
+            counter: 12345
+        };
+        let password = get_password("masterpass", &site).unwrap();
+        assert_eq!("m8odYG7Vb75Ck7xQV5kDQtIzp", password);
+        let site = Site {
+            id: "uuid".to_string(),
+            site: "site".to_string(),
+            login: "login".to_string(),
+            lowercase: true,
+            uppercase: true,
+            symbols: true,
+            numbers: true,
+            length: 20,
+            counter: 2
+        };
+        let password = get_password("masterpass", &site).unwrap();
+        assert_eq!("(Q8FWP=[q3kGj_T<;p4I", password);
+        let site = Site {
+            id: "uuid".to_string(),
+            site: "site".to_string(),
+            login: "login".to_string(),
+            lowercase: false,
+            uppercase: false,
+            symbols: false,
+            numbers: false,
+            length: 25,
+            counter: 12345
+        };
+        let password = get_password("masterpass", &site);
+        assert!(password.is_err());
     }
 }
