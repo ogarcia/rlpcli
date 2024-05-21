@@ -8,11 +8,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+      - name: Test
+        run: cargo test
       - name: Build
         run: cargo build --release --locked
       - name: Package current compilation
@@ -23,7 +25,7 @@ jobs:
           install -Dm644 "LICENSE" "rlpcli-${GITHUB_REF##*/}-${GITHUB_SHA}-linux-amd64/LICENSE"
           echo "version=${GITHUB_REF##*/}-${GITHUB_SHA}-linux-amd64" >> $GITHUB_OUTPUT
       - name: Archive current compilation
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: "rlpcli-${{ steps.package-current.outputs.version }}"
           path: "rlpcli-${{ steps.package-current.outputs.version }}/"
@@ -37,7 +39,7 @@ jobs:
           tar cvJf "rlpcli-${GITHUB_REF##*/}-linux-amd64.tar.xz" "rlpcli-${GITHUB_REF##*/}-linux-amd64"
           echo "version=${GITHUB_REF##*/}-linux-amd64" >> $GITHUB_OUTPUT
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request'
         with:
           files: "rlpcli-${{ steps.package.outputs.version }}.tar.xz"

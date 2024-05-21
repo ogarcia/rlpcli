@@ -8,10 +8,22 @@ variables:
   PACKAGE_PATH: rlpcli-${CI_COMMIT_TAG}-linux-amd64
 
 stages:
+  - Test
   - Build
   - Package
   - Publish
   - Release
+
+Test rlpcli:
+  stage: Test
+  image: rust:alpine
+  script:
+    - apk -U --no-progress add libc-dev
+    - cargo test
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - target
 
 Build rlpcli:
   stage: Build
