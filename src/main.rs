@@ -9,7 +9,7 @@ use env_logger::{Builder, Env};
 use lesspass::{Algorithm, CharacterSet, generate_entropy, generate_salt, render_password};
 use log::{debug, info, trace, warn, LevelFilter};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::{env, cell::OnceCell, fs, path, process::ExitCode};
+use std::{env, cell::OnceCell, fs, path};
 use ureq::Agent;
 use url::Url;
 use xdg::BaseDirectories;
@@ -79,12 +79,8 @@ impl LessPassClient {
     fn new(host: Url, user: Option<String>, pass: Option<String>) -> LessPassClient {
         LessPassClient {
             host,
-            auth: if user.is_some() && pass.is_some() {
-                Some(Auth {
-                    // Safe to unwrap as they have just been checked
-                    email: user.unwrap(),
-                    password: pass.unwrap()
-                })
+            auth: if let (Some(email), Some(password)) = (user, pass) {
+                Some(Auth {email, password})
             } else {
                 None
             },
@@ -98,7 +94,7 @@ impl LessPassClient {
         // Try to get token form cache file
         let token_cache_file = match BaseDirectories::with_prefix(APP_NAME) {
             Ok(base_directories) => {
-                match base_directories.place_cache_file("token") {
+                match base_directories.place_cache_file(format!("{}.token", self.host.host_str().unwrap_or_else(|| self.host.as_str()).replace('/', ""))) {
                     Ok(token_cache_file) => {
                         info!("Using cache file {} for read and store token", token_cache_file.as_path().display());
                         token_cache_file
@@ -198,6 +194,7 @@ impl LessPassClient {
         match self.agent.get(url.as_str()).set("Authorization", &authorization).call() {
             Ok(response) => {
                 let sites: Sites = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
+                info!("Site list obtained successfully");
                 Ok(sites)
             },
             Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
@@ -243,13 +240,13 @@ fn get_password(master_password: &str, site: &Site) -> Result<String, String> {
         return Err(String::from("There is a problem with site settings, all characters have been excluded"))
     }
     let salt = generate_salt(&site.site, &site.login, site.counter);
-    let entropy = generate_entropy(&master_password, &salt, Algorithm::SHA256, 100000);
+    let entropy = generate_entropy(master_password, &salt, Algorithm::SHA256, 100000);
     let password = render_password(&entropy, charset, site.length.into());
     info!("Returning site password");
     Ok(password)
 }
 
-fn main() -> ExitCode {
+fn main() -> Result<(), String> {
     let matches = command!()
         .arg(Arg::new("site")
              .help("site to obtain password"))
@@ -275,19 +272,9 @@ fn main() -> ExitCode {
              .help("Sets the level of verbosity"))
         .get_matches();
     // Read mandatory environment variable HOST
-    let host = match env::var("LESSPASS_HOST") {
-        Ok(host) => match Url::parse(&host) {
-            Ok(host) => host,
-            Err(_) => {
-                println!("LESSPASS_HOST is not a valid URL");
-                return ExitCode::FAILURE
-            }
-        },
-        Err(_) => {
-            println!("You must configure LESSPASS_HOST environment variable");
-            return ExitCode::FAILURE
-        }
-    };
+    let host = Url::parse(&env::var("LESSPASS_HOST")
+        .map_err(|_| String::from("You must configure LESSPASS_HOST environment variable"))?)
+        .map_err(|e| format!("LESSPASS_HOST is not a valid URL, {}", e))?;
     // Configure loglevel
     match matches.get_count("verbosity") {
         0 => Builder::from_env(Env::default().filter_or(format!("{}_LOGLEVEL", APP_NAME.to_uppercase()), "off")).init(),
@@ -302,25 +289,10 @@ fn main() -> ExitCode {
     let pass = env::var("LESSPASS_PASS").ok();
     // Configure client
     let lesspass_client = LessPassClient::new(host, user, pass);
-    // Perform auth and get the site list
-    let mut sites = match lesspass_client.auth() {
-        Ok(()) => {
-            match lesspass_client.get_sites() {
-                Ok(sites) => {
-                    info!("Site list obtained successfully");
-                    sites
-                },
-                Err(err) => {
-                    println!("{}", err);
-                    return ExitCode::FAILURE
-                }
-            }
-        },
-        Err(err) => {
-            println!("{}", err);
-            return ExitCode::FAILURE
-        }
-    };
+    // Perform auth
+    lesspass_client.auth()?;
+    // Get the site list
+    let mut sites = lesspass_client.get_sites()?;
     // Return site list or site
     match matches.get_one::<String>("site") {
         Some(site) => {
@@ -347,13 +319,8 @@ fn main() -> ExitCode {
                     } else {
                         // Try to get master password from environ
                         match env::var("LESSPASS_MASTERPASS") {
-                            Ok(var) => match get_password(&var, &password) {
-                                Ok(password) => println!("{}", password),
-                                Err(err) => {
-                                    println!("{}", err);
-                                    return ExitCode::FAILURE
-                                }
-                            },
+                            // Master password suplied, print site password
+                            Ok(var) => println!("{}", get_password(&var, password)?),
                             // Master password not suplied, print all site settings
                             Err(_) => {
                                 info!("Master password not suplied, returning site settings");
@@ -380,7 +347,7 @@ fn main() -> ExitCode {
             }
         }
     }
-    ExitCode::SUCCESS
+    Ok(())
 }
 
 #[cfg(test)]
