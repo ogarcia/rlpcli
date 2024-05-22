@@ -208,26 +208,16 @@ impl LessPassClient {
 
 
 fn format_site(site: &Site) -> String {
-    let mut fmt_site = String::new();
-    fmt_site.push_str("ID: ");
-    fmt_site.push_str(&site.id);
-    fmt_site.push_str("\nSite: ");
-    fmt_site.push_str(&site.site);
-    fmt_site.push_str("\nLogin: ");
-    fmt_site.push_str(&site.login);
-    fmt_site.push_str("\nLowercase: ");
-    fmt_site.push_str(&site.lowercase.to_string());
-    fmt_site.push_str("\nUppercase: ");
-    fmt_site.push_str(&site.uppercase.to_string());
-    fmt_site.push_str("\nSymbols: ");
-    fmt_site.push_str(&site.symbols.to_string());
-    fmt_site.push_str("\nNumbers: ");
-    fmt_site.push_str(&site.numbers.to_string());
-    fmt_site.push_str("\nLength: ");
-    fmt_site.push_str(&site.length.to_string());
-    fmt_site.push_str("\nCouter: ");
-    fmt_site.push_str(&site.counter.to_string());
-    fmt_site
+    format!("ID: {}\nSite: {}\nLogin: {}\nLowercase: {}\nUppercase: {}\nSymbols: {}\nNumbers: {}\nLength: {}\nCouter: {}",
+        site.id,
+        site.site,
+        site.login,
+        site.lowercase,
+        site.uppercase,
+        site.symbols,
+        site.numbers,
+        site.length,
+        site.counter)
 }
 
 fn get_password(master_password: &str, site: &Site) -> Result<String, String> {
