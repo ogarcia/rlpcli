@@ -1,6 +1,6 @@
 //
 // rlpcli
-// Copyright (C) 2021-2024 Óscar García Amor <ogarcia@connectical.com>
+// Copyright (C) 2021-2025 Óscar García Amor <ogarcia@connectical.com>
 // Distributed under terms of the GNU GPLv3 license.
 //
 
