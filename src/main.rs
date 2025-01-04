@@ -48,7 +48,7 @@ pub struct Site {
     pub uppercase: bool,
     pub symbols: bool,
     #[serde(flatten, deserialize_with = "digits_deserializer")]
-    pub numbers: bool,
+    pub digits: bool,
     pub length: u8,
     pub counter: u32
 }
@@ -218,14 +218,14 @@ impl LessPassClient {
 
 
 fn format_site(site: &Site) -> String {
-    format!("ID: {}\nSite: {}\nLogin: {}\nLowercase: {}\nUppercase: {}\nSymbols: {}\nNumbers: {}\nLength: {}\nCouter: {}",
+    format!("ID: {}\nSite: {}\nLogin: {}\nLowercase: {}\nUppercase: {}\nSymbols: {}\nDigits: {}\nLength: {}\nCouter: {}",
         site.id,
         site.site,
         site.login,
         site.lowercase,
         site.uppercase,
         site.symbols,
-        site.numbers,
+        site.digits,
         site.length,
         site.counter)
 }
@@ -245,7 +245,7 @@ fn get_password(master_password: &str, site: &Site) -> Result<String, String> {
         debug!("Symbol characters excluded");
         charset.remove(CharacterSet::Symbols);
     }
-    if ! site.numbers {
+    if ! site.digits {
         debug!("Numeric characters excluded");
         charset.remove(CharacterSet::Numbers);
     }
@@ -458,9 +458,9 @@ mod tests {
         assert!(sites.results[0].lowercase);
         assert!(sites.results[0].uppercase);
         assert!(sites.results[0].symbols);
-        assert!(sites.results[1].numbers);
-        assert!(!sites.results[2].numbers);
-        assert!(sites.results[3].numbers);
+        assert!(sites.results[1].digits);
+        assert!(!sites.results[2].digits);
+        assert!(sites.results[3].digits);
         assert_eq!(20, sites.results[0].length);
         assert_eq!(30, sites.results[1].length);
         assert_eq!(1, sites.results[0].counter);
@@ -486,12 +486,12 @@ mod tests {
             lowercase: true,
             uppercase: true,
             symbols: false,
-            numbers: true,
+            digits: true,
             length: 254,
             counter: 12345
         };
         let fmt_site = format_site(&site);
-        assert_eq!("ID: uuid\nSite: site\nLogin: login\nLowercase: true\nUppercase: true\nSymbols: false\nNumbers: true\nLength: 254\nCouter: 12345".to_string(), fmt_site);
+        assert_eq!("ID: uuid\nSite: site\nLogin: login\nLowercase: true\nUppercase: true\nSymbols: false\nDigits: true\nLength: 254\nCouter: 12345".to_string(), fmt_site);
     }
 
     #[test]
@@ -503,7 +503,7 @@ mod tests {
             lowercase: true,
             uppercase: true,
             symbols: false,
-            numbers: true,
+            digits: true,
             length: 25,
             counter: 12345
         };
@@ -516,7 +516,7 @@ mod tests {
             lowercase: true,
             uppercase: true,
             symbols: true,
-            numbers: true,
+            digits: true,
             length: 20,
             counter: 2
         };
@@ -529,7 +529,7 @@ mod tests {
             lowercase: false,
             uppercase: false,
             symbols: false,
-            numbers: false,
+            digits: false,
             length: 25,
             counter: 12345
         };
