@@ -47,6 +47,7 @@ pub struct Site {
     pub lowercase: bool,
     pub uppercase: bool,
     pub symbols: bool,
+    #[serde(flatten, deserialize_with = "digits_deserializer")]
     pub numbers: bool,
     pub length: u8,
     pub counter: u32
@@ -65,6 +66,18 @@ fn id_deserializer<'de, D>(deserializer: D) -> Result<String, D::Error> where D:
         StringOrInteger::String(string) => Ok(string),
         StringOrInteger::Integer(integer) => Ok(integer.to_string())
     }
+}
+
+/// The numbers field is deprecated and has been replaced by digits, this function checks if what
+/// arrives is digits or numbers and, if both, the value of digits is used.
+fn digits_deserializer<'de, D>(deserializer: D) -> Result<bool, D::Error> where D: Deserializer<'de>, {
+    #[derive(Deserialize)]
+    struct DigitsOrNumbers {
+        digits: Option<bool>,
+        numbers: Option<bool>
+    }
+    let digits_or_numbers = DigitsOrNumbers::deserialize(deserializer)?;
+    Ok(digits_or_numbers.digits.or(digits_or_numbers.numbers).unwrap_or(false))
 }
 
 struct LessPassClient {
@@ -425,8 +438,10 @@ mod tests {
             access: "access_token".to_string(),
             refresh: "refresh_token".to_string()
         }).unwrap();
-        let response_body = r#"{"results":[{"id":"1","site":"site","login":"login","lowercase":true,"uppercase":true,"symbols":true,"numbers":false,"length":20,"counter":1},
-        {"id":2,"site":"othersite","login":"otherlogin","lowercase":false,"uppercase":false,"symbols":false,"numbers":true,"length":30,"counter":10}]}"#;
+        let response_body = r#"{"results":[{"id":"1","site":"site","login":"login","lowercase":true,"uppercase":true,"symbols":true,"digits":false,"length":20,"counter":1},
+        {"id":2,"site":"othersite","login":"otherlogin","lowercase":false,"uppercase":false,"symbols":false,"numbers":true,"length":30,"counter":10},
+        {"id":"double-one","site":"doubleone","login":"doubleonelogin","lowercase":false,"uppercase":false,"symbols":false,"digits":false,"numbers":true,"length":8,"counter":2},
+        {"id":4,"site":"doubletwo","login":"doubletwologin","lowercase":false,"uppercase":false,"symbols":false,"digits":true,"numbers":false,"length":16,"counter":5}]}"#;
         let mock = server.mock("GET", "/passwords/")
             .with_status(200)
             .with_header(JH.0, JH.1)
@@ -444,6 +459,8 @@ mod tests {
         assert!(sites.results[0].uppercase);
         assert!(sites.results[0].symbols);
         assert!(sites.results[1].numbers);
+        assert!(!sites.results[2].numbers);
+        assert!(sites.results[3].numbers);
         assert_eq!(20, sites.results[0].length);
         assert_eq!(30, sites.results[1].length);
         assert_eq!(1, sites.results[0].counter);
