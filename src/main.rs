@@ -76,8 +76,8 @@ fn digits_deserializer<'de, D>(deserializer: D) -> Result<bool, D::Error> where 
         digits: Option<bool>,
         numbers: Option<bool>
     }
-    let digits_or_numbers = DigitsOrNumbers::deserialize(deserializer)?;
-    Ok(digits_or_numbers.digits.or(digits_or_numbers.numbers).unwrap_or(false))
+    let DigitsOrNumbers {digits, numbers} = DigitsOrNumbers::deserialize(deserializer)?;
+    digits.or(numbers).ok_or(serde::de::Error::missing_field("digits or numbers"))
 }
 
 struct LessPassClient {
