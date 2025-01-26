@@ -15,7 +15,7 @@ env_logger = "0.11.6"
 lesspass = "0.4.0"
 log = "0.4.22"
 serde = { version = "1.0.217", features = ["derive"] }
-ureq = { version = "2.12.1", features = ["json"] }
+ureq = { version = "3.0.0", features = ["json"] }
 url = "2.5.4"
 xdg = "2.5.2"
 
