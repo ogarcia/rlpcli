@@ -1,6 +1,6 @@
 [package]
 name = "rlpcli"
-version = "1.3.1"
+version = "1.3.2"
 edition = "2021"
 description = "Tiny LessPass API server client CLI to get passwords and site settings"
 readme = "README.md"
@@ -10,12 +10,12 @@ keywords = ["lesspass", "rockpass", "password", "client", "cli"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-clap = { version = "4.5.23", features = ["cargo"] }
+clap = { version = "4.5.27", features = ["cargo"] }
 env_logger = "0.11.6"
 lesspass = "0.4.0"
-log = "0.4.22"
+log = "0.4.25"
 serde = { version = "1.0.217", features = ["derive"] }
-ureq = { version = "2.12.1", features = ["json"] }
+ureq = { version = "3.0.2", features = ["json"] }
 url = "2.5.4"
 xdg = "2.5.2"
 

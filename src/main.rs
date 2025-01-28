@@ -98,7 +98,7 @@ impl LessPassClient {
                 None
             },
             token: OnceCell::new(),
-            agent: Agent::new()
+            agent: Agent::new_with_defaults()
         }
     }
 
@@ -161,11 +161,11 @@ impl LessPassClient {
                 trace!("Using {} (value is masked) as LESSPASS_PASS", "*".repeat(auth.password.len()));
                 match self.agent.post(url.as_str()).send_json(auth) {
                     Ok(response) => {
-                        let token: Token = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
+                        let token: Token = response.into_body().read_json().map_err(|e| format!("Unexpected response, {}", e))?;
                         info!("Token created successfully");
                         Ok(token)
                     },
-                    Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
+                    Err(ureq::Error::StatusCode(code)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
                     Err(_) => Err(format!("Error making request to {}", url))
                 }
             },
@@ -187,11 +187,11 @@ impl LessPassClient {
         };
         match self.agent.post(url.as_str()).send_json(refresh) {
             Ok(response) => {
-                let token: Token = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
+                let token: Token = response.into_body().read_json().map_err(|e| format!("Unexpected response, {}", e))?;
                 info!("Token refreshed successfully");
                 Ok(token)
             },
-            Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
+            Err(ureq::Error::StatusCode(code)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
             Err(_) => Err(format!("Error making request to {}", url))
         }
     }
@@ -204,13 +204,13 @@ impl LessPassClient {
             None => return Err(String::from("A token must be obtained first"))
         };
         let authorization = format!("Bearer {}", token);
-        match self.agent.get(url.as_str()).set("Authorization", &authorization).call() {
+        match self.agent.get(url.as_str()).header("Authorization", &authorization).call() {
             Ok(response) => {
-                let sites: Sites = response.into_json().map_err(|e| format!("Unexpected response, {}", e))?;
+                let sites: Sites = response.into_body().read_json().map_err(|e| format!("Unexpected response, {}", e))?;
                 info!("Site list obtained successfully");
                 Ok(sites)
             },
-            Err(ureq::Error::Status(code, _)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
+            Err(ureq::Error::StatusCode(code)) => Err(format!("Error getting authorization token, unexpected status code {}", code)),
             Err(_) => Err(format!("Error making request to {}", url))
         }
     }
