@@ -12,7 +12,7 @@ categories = ["command-line-utilities"]
 [dependencies]
 clap = { version = "4.5.27", features = ["cargo"] }
 env_logger = "0.11.6"
-lesspass = "0.4.0"
+lesspass = "0.5.0"
 log = "0.4.25"
 serde = { version = "1.0.217", features = ["derive"] }
 ureq = { version = "3.0.2", features = ["json"] }
