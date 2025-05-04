@@ -1070,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "rlpcli"
-version = "1.3.3"
+version = "1.3.4"
 dependencies = [
  "clap",
  "env_logger",
@@ -1623,9 +1623,9 @@ checksum = "1e9df38ee2d2c3c5948ea468a8406ff0db0b29ae1ffde1bcf20ef305bcc95c51"
 
 [[package]]
 name = "xdg"
-version = "2.6.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4729c337a4dcf08d997720dc77cb69e1fb62284eee87fd6e3f5035d63b18414b"
+checksum = "2fb433233f2df9344722454bc7e96465c9d03bff9d77c248f9e7523fe79585b5"
 
 [[package]]
 name = "yoke"
