@@ -239,7 +239,7 @@ fn get_password(master_password: &str, site: &Site) -> Result<String, String> {
     }
     if ! site.digits {
         debug!("Numeric characters excluded");
-        charset.remove(CharacterSet::Numbers);
+        charset.remove(CharacterSet::Digits);
     }
     if charset.is_empty() {
         return Err(String::from("There is a problem with site settings, all characters have been excluded"))
