@@ -105,21 +105,13 @@ impl LessPassClient {
     /// Perform authentication
     fn auth(&self) -> Result<(), String> {
         // Try to get token form cache file
-        let token_cache_file = match BaseDirectories::with_prefix(APP_NAME) {
-            Ok(base_directories) => {
-                match base_directories.place_cache_file(format!("{}.token", self.host.host_str().unwrap_or_else(|| self.host.as_str()).replace('/', ""))) {
-                    Ok(token_cache_file) => {
-                        info!("Using cache file {} for read and store token", token_cache_file.as_path().display());
-                        token_cache_file
-                    },
-                    Err(e) => {
-                        warn!("There is a problem accessing to cache file caused by {}, disabling cache", e);
-                        path::PathBuf::new()
-                    }
-                }
+        let token_cache_file = match BaseDirectories::with_prefix(APP_NAME).place_cache_file(format!("{}.token", self.host.host_str().unwrap_or_else(|| self.host.as_str()).replace('/', ""))) {
+            Ok(token_cache_file) => {
+                info!("Using cache file {} for read and store token", token_cache_file.as_path().display());
+                token_cache_file
             },
             Err(e) => {
-                warn!("There is a problem getting base directories caused by {}, disabling cache", e);
+                warn!("There is a problem accessing to cache file caused by {}, disabling cache", e);
                 path::PathBuf::new()
             }
         };

@@ -17,7 +17,7 @@ log = "0.4.25"
 serde = { version = "1.0.217", features = ["derive"] }
 ureq = { version = "3.0.2", features = ["json"] }
 url = "2.5.4"
-xdg = "2.5.2"
+xdg = "2.6.0"
 
 [dev-dependencies]
 mockito = "1.6.1"
